@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { subscribeToServiceQueue } from '../services/socket';
 import QueueStatusBadge from '../components/QueueStatusBadge';
+import AnalyticsCharts from '../components/AnalyticsCharts';
 import Modal from '../components/Modal';
 import {
   Shield,
@@ -13,10 +14,13 @@ import {
   RefreshCw,
   ToggleLeft,
   ToggleRight,
-  Radio
+  Radio,
+  BarChart3,
+  Sliders
 } from 'lucide-react';
 
 export default function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState('queue'); // 'queue' or 'analytics'
   const [orgs, setOrgs] = useState([]);
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [queueData, setQueueData] = useState(null);
@@ -28,7 +32,7 @@ export default function AdminDashboard() {
   const [showAddService, setShowAddService] = useState(false);
   const [showAddOrg, setShowAddOrg] = useState(false);
 
-  // New Service Form
+  // Forms state
   const [newService, setNewService] = useState({
     organizationId: '',
     name: '',
@@ -37,7 +41,6 @@ export default function AdminDashboard() {
     estimatedTimePerUser: 5
   });
 
-  // New Org Form
   const [newOrg, setNewOrg] = useState({
     name: '',
     code: '',
@@ -77,14 +80,13 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
-    if (selectedServiceId) {
+    if (selectedServiceId && activeTab === 'queue') {
       fetchQueueData(selectedServiceId);
     }
-  }, [selectedServiceId]);
+  }, [selectedServiceId, activeTab]);
 
-  // Real-time Socket.IO sync for selected service
   useEffect(() => {
-    if (!selectedServiceId) return;
+    if (!selectedServiceId || activeTab !== 'queue') return;
 
     const unsubscribe = subscribeToServiceQueue(selectedServiceId, (eventData) => {
       console.log('[Socket.IO Admin] Live queue event received:', eventData);
@@ -92,7 +94,7 @@ export default function AdminDashboard() {
     });
 
     return () => unsubscribe();
-  }, [selectedServiceId]);
+  }, [selectedServiceId, activeTab]);
 
   const handleCallNext = async () => {
     if (!selectedServiceId) return;
@@ -177,7 +179,7 @@ export default function AdminDashboard() {
               <h1 className="text-2xl font-bold font-heading text-white">Queue Control Dashboard</h1>
               <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-                <span>Live Socket.IO Sync</span>
+                <span>Live Sync</span>
               </span>
             </div>
             <p className="text-xs text-slate-400">Manage organizations, services, and live queue operations</p>
@@ -185,233 +187,267 @@ export default function AdminDashboard() {
         </div>
 
         <div className="flex items-center space-x-3 flex-wrap gap-y-2">
+          {/* Navigation Tabs */}
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1">
+            <button
+              onClick={() => setActiveTab('queue')}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'queue'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Live Queue</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'analytics'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Analytics & Insights</span>
+            </button>
+          </div>
+
+          <div className="h-6 w-px bg-slate-800 my-auto hidden sm:block" />
+
           <button
             onClick={() => setShowAddOrg(true)}
             className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center space-x-1.5 transition-all"
           >
             <Building2 className="w-4 h-4 text-indigo-400" />
-            <span>+ Add Organization</span>
+            <span>+ Org</span>
           </button>
           <button
             onClick={() => setShowAddService(true)}
             className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 flex items-center space-x-1.5 transition-all"
           >
             <Plus className="w-4 h-4" />
-            <span>+ Add Service</span>
+            <span>+ Service</span>
           </button>
         </div>
       </div>
 
-      {/* Service Selector Bar */}
-      <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <label className="text-xs uppercase tracking-wider font-semibold text-slate-400 block">
-              Select Active Queue Service to Control:
-            </label>
-            <div className="flex items-center space-x-3">
-              <select
-                value={selectedServiceId}
-                onChange={(e) => setSelectedServiceId(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-w-[260px]"
-              >
-                {orgs.map(org => (
-                  <optgroup key={org._id} label={org.name}>
-                    {org.services?.map(s => (
-                      <option key={s._id} value={s._id}>
-                        [{s.prefix}] {s.name} ({s.status.toUpperCase()})
-                      </option>
+      {activeTab === 'analytics' ? (
+        <AnalyticsCharts />
+      ) : (
+        <>
+          {/* Service Selector Bar */}
+          <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <label className="text-xs uppercase tracking-wider font-semibold text-slate-400 block">
+                  Select Active Queue Service to Control:
+                </label>
+                <div className="flex items-center space-x-3">
+                  <select
+                    value={selectedServiceId}
+                    onChange={(e) => setSelectedServiceId(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-w-[260px]"
+                  >
+                    {orgs.map(org => (
+                      <optgroup key={org._id} label={org.name}>
+                        {org.services?.map(s => (
+                          <option key={s._id} value={s._id}>
+                            [{s.prefix}] {s.name} ({s.status.toUpperCase()})
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
-                  </optgroup>
-                ))}
-              </select>
+                  </select>
 
-              {currentService && (
-                <button
-                  onClick={() => handleToggleServiceStatus(currentService._id, currentService.status)}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border flex items-center space-x-2 transition-all ${
-                    currentService.status === 'open'
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                      : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
-                  }`}
-                >
-                  {currentService.status === 'open' ? (
-                    <>
-                      <ToggleRight className="w-4 h-4 text-emerald-400" />
-                      <span>QUEUE IS OPEN</span>
-                    </>
-                  ) : (
-                    <>
-                      <ToggleLeft className="w-4 h-4 text-rose-400" />
-                      <span>QUEUE IS CLOSED</span>
-                    </>
+                  {currentService && (
+                    <button
+                      onClick={() => handleToggleServiceStatus(currentService._id, currentService.status)}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border flex items-center space-x-2 transition-all ${
+                        currentService.status === 'open'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                      }`}
+                    >
+                      {currentService.status === 'open' ? (
+                        <>
+                          <ToggleRight className="w-4 h-4 text-emerald-400" />
+                          <span>QUEUE IS OPEN</span>
+                        </>
+                      ) : (
+                        <>
+                          <ToggleLeft className="w-4 h-4 text-rose-400" />
+                          <span>QUEUE IS CLOSED</span>
+                        </>
+                      )}
+                    </button>
                   )}
-                </button>
-              )}
+                </div>
+              </div>
+
+              <button
+                onClick={() => fetchQueueData(selectedServiceId)}
+                disabled={refreshing}
+                className="self-end sm:self-center px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 text-xs font-semibold flex items-center space-x-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-indigo-400' : ''}`} />
+                <span>Sync</span>
+              </button>
             </div>
           </div>
 
-          <button
-            onClick={() => fetchQueueData(selectedServiceId)}
-            disabled={refreshing}
-            className="self-end sm:self-center px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 text-xs font-semibold flex items-center space-x-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-indigo-400' : ''}`} />
-            <span>Sync</span>
-          </button>
-        </div>
-      </div>
+          {/* Metrics Banner */}
+          {queueData && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 font-medium">Currently Serving</span>
+                <div className="text-3xl font-extrabold font-heading text-emerald-400">
+                  {queueData.currentServingToken || 'None'}
+                </div>
+                <span className="text-[11px] text-slate-500">active called token</span>
+              </div>
 
-      {/* Metrics Banner */}
-      {queueData && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
-            <span className="text-xs text-slate-400 font-medium">Currently Serving</span>
-            <div className="text-3xl font-extrabold font-heading text-emerald-400">
-              {queueData.currentServingToken || 'None'}
-            </div>
-            <span className="text-[11px] text-slate-500">active called token</span>
-          </div>
+              <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 font-medium">Waiting in Queue</span>
+                <div className="text-3xl font-extrabold font-heading text-amber-400">
+                  {queueData.totalWaiting}
+                </div>
+                <span className="text-[11px] text-slate-500">tokens awaiting call</span>
+              </div>
 
-          <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
-            <span className="text-xs text-slate-400 font-medium">Waiting in Queue</span>
-            <div className="text-3xl font-extrabold font-heading text-amber-400">
-              {queueData.totalWaiting}
-            </div>
-            <span className="text-[11px] text-slate-500">tokens awaiting call</span>
-          </div>
+              <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 font-medium">Served Today</span>
+                <div className="text-3xl font-extrabold font-heading text-white">
+                  {queueData.completedCount}
+                </div>
+                <span className="text-[11px] text-slate-500">completed tokens</span>
+              </div>
 
-          <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
-            <span className="text-xs text-slate-400 font-medium">Served Today</span>
-            <div className="text-3xl font-extrabold font-heading text-white">
-              {queueData.completedCount}
+              <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 font-medium">Skipped Tokens</span>
+                <div className="text-3xl font-extrabold font-heading text-rose-400">
+                  {queueData.skippedCount}
+                </div>
+                <span className="text-[11px] text-slate-500">tokens skipped</span>
+              </div>
             </div>
-            <span className="text-[11px] text-slate-500">completed tokens</span>
-          </div>
+          )}
 
-          <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1">
-            <span className="text-xs text-slate-400 font-medium">Skipped Tokens</span>
-            <div className="text-3xl font-extrabold font-heading text-rose-400">
-              {queueData.skippedCount}
+          {/* Main Queue Management Section */}
+          <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-3">
+                <h2 className="text-xl font-bold font-heading text-white">Live Token Queue</h2>
+                <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 rounded-lg p-1">
+                  {['all', 'waiting', 'called', 'completed', 'skipped'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setStatusFilter(f)}
+                      className={`px-3 py-1 rounded-md text-xs font-medium capitalize transition-all ${
+                        statusFilter === f
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={handleCallNext}
+                disabled={!queueData || queueData.totalWaiting === 0}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/30 flex items-center space-x-2 transition-all"
+              >
+                <Play className="w-5 h-5 fill-current" />
+                <span>CALL NEXT TOKEN</span>
+              </button>
             </div>
-            <span className="text-[11px] text-slate-500">tokens skipped</span>
+
+            {/* Tokens Table */}
+            {loading ? (
+              <div className="flex justify-center py-12">
+                <div className="w-8 h-8 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+              </div>
+            ) : filteredTokens.length === 0 ? (
+              <div className="text-center py-12 text-slate-500 text-sm italic">
+                No tokens found matching current filter.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-slate-400 uppercase tracking-wider border-b border-slate-800 bg-slate-950/40">
+                    <tr>
+                      <th className="px-4 py-3">Token #</th>
+                      <th className="px-4 py-3">Customer Name</th>
+                      <th className="px-4 py-3">Phone</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">AI Pred. Wait</th>
+                      <th className="px-4 py-3">Created At</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredTokens.map((token) => (
+                      <tr key={token._id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="px-4 py-3 font-mono font-bold text-sm text-indigo-300">
+                          {token.tokenNumber}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-200">
+                          {token.customerName}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400">
+                          {token.customerPhone || 'N/A'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <QueueStatusBadge status={token.status} />
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 font-mono">
+                          {token.predictedWaitTimeMins !== null ? `~${token.predictedWaitTimeMins}m` : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400">
+                          {new Date(token.createdAt).toLocaleTimeString()}
+                        </td>
+                        <td className="px-4 py-3 text-right space-x-2">
+                          {token.status === 'called' && (
+                            <button
+                              onClick={() => handleUpdateStatus(token._id, 'completed')}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold flex items-center space-x-1 inline-flex transition-all shadow-sm"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Complete</span>
+                            </button>
+                          )}
+
+                          {(token.status === 'waiting' || token.status === 'called') && (
+                            <button
+                              onClick={() => handleUpdateStatus(token._id, 'skipped')}
+                              className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-lg font-semibold flex items-center space-x-1 inline-flex transition-all"
+                            >
+                              <SkipForward className="w-3.5 h-3.5" />
+                              <span>Skip</span>
+                            </button>
+                          )}
+
+                          {token.status === 'skipped' && (
+                            <button
+                              onClick={() => handleUpdateStatus(token._id, 'waiting')}
+                              className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg font-semibold inline-flex transition-all"
+                            >
+                              Re-queue
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </div>
+        </>
       )}
-
-      {/* Main Queue Management Section */}
-      <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-          <div className="flex items-center space-x-3">
-            <h2 className="text-xl font-bold font-heading text-white">Live Token Queue</h2>
-            <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 rounded-lg p-1">
-              {['all', 'waiting', 'called', 'completed', 'skipped'].map(f => (
-                <button
-                  key={f}
-                  onClick={() => setStatusFilter(f)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium capitalize transition-all ${
-                    statusFilter === f
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={handleCallNext}
-            disabled={!queueData || queueData.totalWaiting === 0}
-            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/30 flex items-center space-x-2 transition-all"
-          >
-            <Play className="w-5 h-5 fill-current" />
-            <span>CALL NEXT TOKEN</span>
-          </button>
-        </div>
-
-        {/* Tokens Table */}
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="w-8 h-8 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
-          </div>
-        ) : filteredTokens.length === 0 ? (
-          <div className="text-center py-12 text-slate-500 text-sm italic">
-            No tokens found matching current filter.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="text-slate-400 uppercase tracking-wider border-b border-slate-800 bg-slate-950/40">
-                <tr>
-                  <th className="px-4 py-3">Token #</th>
-                  <th className="px-4 py-3">Customer Name</th>
-                  <th className="px-4 py-3">Phone</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">AI Pred. Wait</th>
-                  <th className="px-4 py-3">Created At</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {filteredTokens.map((token) => (
-                  <tr key={token._id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="px-4 py-3 font-mono font-bold text-sm text-indigo-300">
-                      {token.tokenNumber}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-200">
-                      {token.customerName}
-                    </td>
-                    <td className="px-4 py-3 text-slate-400">
-                      {token.customerPhone || 'N/A'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <QueueStatusBadge status={token.status} />
-                    </td>
-                    <td className="px-4 py-3 text-slate-300 font-mono">
-                      {token.predictedWaitTimeMins !== null ? `~${token.predictedWaitTimeMins}m` : '-'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-400">
-                      {new Date(token.createdAt).toLocaleTimeString()}
-                    </td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      {token.status === 'called' && (
-                        <button
-                          onClick={() => handleUpdateStatus(token._id, 'completed')}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold flex items-center space-x-1 inline-flex transition-all shadow-sm"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Complete</span>
-                        </button>
-                      )}
-
-                      {(token.status === 'waiting' || token.status === 'called') && (
-                        <button
-                          onClick={() => handleUpdateStatus(token._id, 'skipped')}
-                          className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-lg font-semibold flex items-center space-x-1 inline-flex transition-all"
-                        >
-                          <SkipForward className="w-3.5 h-3.5" />
-                          <span>Skip</span>
-                        </button>
-                      )}
-
-                      {token.status === 'skipped' && (
-                        <button
-                          onClick={() => handleUpdateStatus(token._id, 'waiting')}
-                          className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg font-semibold inline-flex transition-all"
-                        >
-                          Re-queue
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
 
       {/* Add Service Modal */}
       <Modal isOpen={showAddService} onClose={() => setShowAddService(false)} title="Add New Queue Service">

@@ -1,7 +1,8 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Ticket, Shield, LogOut, User as UserIcon, LayoutDashboard, Layers } from 'lucide-react';
+import NotificationCenter from './NotificationCenter';
+import { Ticket, Shield, LogOut, User as UserIcon, Layers } from 'lucide-react';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -60,6 +61,8 @@ export default function Navbar() {
                     <span>Admin Dashboard</span>
                   </Link>
                 )}
+
+                <NotificationCenter />
 
                 <div className="h-5 w-px bg-slate-800 my-auto" />
 

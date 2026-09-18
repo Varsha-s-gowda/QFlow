@@ -1,7 +1,24 @@
 const Token = require('../models/Token');
 const Service = require('../models/Service');
+const Notification = require('../models/Notification');
 const { getPredictedWaitTime } = require('../services/aiServiceBridge');
 const { notifyQueueUpdate, notifyTokenUpdate } = require('../socket');
+
+// Helper to create & push notification
+const sendNotification = async (userId, tokenId, title, message, type) => {
+  try {
+    const notif = await Notification.create({
+      userId,
+      tokenId,
+      title,
+      message,
+      type
+    });
+    notifyTokenUpdate(userId, { action: 'notification_received', notification: notif });
+  } catch (err) {
+    console.error('Failed to create notification:', err);
+  }
+};
 
 // @desc    Join queue & auto-generate digital token with AI prediction
 // @route   POST /api/queue/join (User)
@@ -40,7 +57,6 @@ exports.joinQueue = async (req, res) => {
     const sequenceNumber = updatedService.currentCounter;
     const tokenNumber = `${service.prefix}-${sequenceNumber}`;
 
-    // Calculate queue stats
     const peopleAhead = await Token.countDocuments({
       serviceId,
       status: 'waiting',
@@ -52,7 +68,6 @@ exports.joinQueue = async (req, res) => {
       status: { $in: ['waiting', 'called'] }
     });
 
-    // AI Prediction call
     const aiPrediction = await getPredictedWaitTime({
       peopleAhead,
       queueLength: totalQueueLength,
@@ -73,6 +88,15 @@ exports.joinQueue = async (req, res) => {
       predictionConfidence: aiPrediction.confidenceScore
     });
 
+    // Create Notification
+    await sendNotification(
+      userId,
+      token._id,
+      'Token Created',
+      `Your digital token #${tokenNumber} for ${service.name} is confirmed. Est. wait time: ~${aiPrediction.predictedWaitTimeMins} mins.`,
+      'info'
+    );
+
     const payload = {
       token,
       queueStats: {
@@ -85,9 +109,7 @@ exports.joinQueue = async (req, res) => {
       }
     };
 
-    // Emit Socket.IO real-time notification to service room & user room
     notifyQueueUpdate(serviceId, { action: 'join', token });
-    notifyTokenUpdate(userId, { action: 'created', token });
 
     res.status(201).json(payload);
   } catch (error) {
@@ -131,7 +153,6 @@ exports.getMyActiveToken = async (req, res) => {
       status: 'called'
     }).sort({ calledAt: -1 });
 
-    // AI Prediction call
     const aiPrediction = await getPredictedWaitTime({
       peopleAhead,
       queueLength: totalQueueLength,
@@ -208,8 +229,7 @@ exports.callNextToken = async (req, res) => {
     const now = new Date();
     nextToken.status = 'called';
     nextToken.calledAt = now;
-    
-    // Calculate actual wait duration in minutes
+
     if (nextToken.createdAt) {
       const waitMs = now.getTime() - new Date(nextToken.createdAt).getTime();
       nextToken.actualWaitDurationMins = Math.round((waitMs / 60000) * 10) / 10;
@@ -217,7 +237,30 @@ exports.callNextToken = async (req, res) => {
 
     await nextToken.save();
 
-    // Broadcast Socket.IO events
+    // Send Notification to Called User
+    await sendNotification(
+      nextToken.userId,
+      nextToken._id,
+      'YOUR TURN HAS BEEN CALLED!',
+      `Token #${nextToken.tokenNumber} is now being served. Please proceed to the counter immediately.`,
+      'called'
+    );
+
+    // Check remaining waiting tokens and notify those with 2 or fewer people ahead
+    const remainingWaiting = await Token.find({ serviceId, status: 'waiting' }).sort({ sequenceNumber: 1 });
+    for (let index = 0; index < remainingWaiting.length; index++) {
+      const t = remainingWaiting[index];
+      if (index < 2) {
+        await sendNotification(
+          t.userId,
+          t._id,
+          'Get Ready! Almost Your Turn',
+          `Token #${t.tokenNumber}: There are only ${index + 1} person(s) ahead of you.`,
+          'approaching'
+        );
+      }
+    }
+
     notifyQueueUpdate(serviceId, { action: 'token_called', token: nextToken });
     notifyTokenUpdate(nextToken.userId, { action: 'called', token: nextToken });
 
@@ -257,14 +300,31 @@ exports.updateTokenStatus = async (req, res) => {
         const serviceMs = now.getTime() - new Date(token.calledAt).getTime();
         token.actualServiceDurationMins = Math.round((serviceMs / 60000) * 10) / 10;
       }
+      await sendNotification(
+        token.userId,
+        token._id,
+        'Token Completed',
+        `Your service for Token #${token.tokenNumber} is marked complete. Thank you!`,
+        'completed'
+      );
     }
+
+    if (status === 'skipped') {
+      await sendNotification(
+        token.userId,
+        token._id,
+        'Token Skipped',
+        `Token #${token.tokenNumber} was skipped as you were not present at the counter.`,
+        'skipped'
+      );
+    }
+
     if (status === 'called') {
       token.calledAt = now;
     }
 
     await token.save();
 
-    // Emit real-time Socket.IO notifications
     notifyQueueUpdate(token.serviceId, { action: 'status_updated', token });
     notifyTokenUpdate(token.userId, { action: 'status_updated', token });
 
