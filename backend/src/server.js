@@ -21,6 +21,7 @@ app.use(express.json());
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/orgs', require('./routes/orgRoutes'));
 app.use('/api/services', require('./routes/serviceRoutes'));
+app.use('/api/counters', require('./routes/counterRoutes'));
 app.use('/api/queue', require('./routes/queueRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/analytics', require('./routes/analyticsRoutes'));
@@ -28,7 +29,7 @@ app.use('/api/analytics', require('./routes/analyticsRoutes'));
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    system: 'SmartQ Backend with Socket.IO, AI Bridge, Notifications & Analytics',
+    system: 'SmartQ Backend with Socket.IO, AI Bridge, Counters, CV & Analytics',
     timestamp: new Date()
   });
 });

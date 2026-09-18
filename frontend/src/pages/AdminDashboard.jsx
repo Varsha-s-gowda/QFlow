@@ -3,6 +3,9 @@ import { api } from '../services/api';
 import { subscribeToServiceQueue } from '../services/socket';
 import QueueStatusBadge from '../components/QueueStatusBadge';
 import AnalyticsCharts from '../components/AnalyticsCharts';
+import CounterManager from '../components/CounterManager';
+import WhatIfSimulator from '../components/WhatIfSimulator';
+import ComputerVisionInspector from '../components/ComputerVisionInspector';
 import Modal from '../components/Modal';
 import {
   Shield,
@@ -16,11 +19,14 @@ import {
   ToggleRight,
   Radio,
   BarChart3,
-  Sliders
+  Sliders,
+  Monitor,
+  Cpu,
+  Camera
 } from 'lucide-react';
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('queue'); // 'queue' or 'analytics'
+  const [activeTab, setActiveTab] = useState('queue'); // 'queue', 'counters', 'analytics', 'simulation', 'cv'
   const [orgs, setOrgs] = useState([]);
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [queueData, setQueueData] = useState(null);
@@ -169,29 +175,29 @@ export default function AdminDashboard() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Top Admin Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass-panel p-6 rounded-3xl border border-slate-800 shadow-xl">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 glass-panel p-6 rounded-3xl border border-slate-800 shadow-xl">
         <div className="flex items-center space-x-3">
           <div className="p-3 bg-indigo-600/20 text-indigo-400 rounded-2xl border border-indigo-500/30">
             <Shield className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h1 className="text-2xl font-bold font-heading text-white">Queue Control Dashboard</h1>
+              <h1 className="text-2xl font-bold font-heading text-white">Queue Management Suite</h1>
               <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-                <span>Live Sync</span>
+                <span>Step 5 Active</span>
               </span>
             </div>
-            <p className="text-xs text-slate-400">Manage organizations, services, and live queue operations</p>
+            <p className="text-xs text-slate-400">Multi-counter management, real-time allocation, AI simulations & CV queue detection</p>
           </div>
         </div>
 
         <div className="flex items-center space-x-3 flex-wrap gap-y-2">
           {/* Navigation Tabs */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1">
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1 overflow-x-auto">
             <button
               onClick={() => setActiveTab('queue')}
-              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 activeTab === 'queue'
                   ? 'bg-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
@@ -200,20 +206,55 @@ export default function AdminDashboard() {
               <Sliders className="w-3.5 h-3.5" />
               <span>Live Queue</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab('counters')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'counters'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Monitor className="w-3.5 h-3.5" />
+              <span>Counters</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('analytics')}
-              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 activeTab === 'analytics'
                   ? 'bg-indigo-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>Analytics & Insights</span>
+              <span>Analytics</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('simulation')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'simulation'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5 text-purple-300" />
+              <span>What-If Simulator</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('cv')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'cv'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-emerald-300" />
+              <span>CV Vision</span>
             </button>
           </div>
-
-          <div className="h-6 w-px bg-slate-800 my-auto hidden sm:block" />
 
           <button
             onClick={() => setShowAddOrg(true)}
@@ -232,9 +273,23 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {activeTab === 'analytics' ? (
+      {activeTab === 'counters' && (
+        <CounterManager orgs={orgs} onCounterCall={() => fetchQueueData(selectedServiceId)} />
+      )}
+
+      {activeTab === 'analytics' && (
         <AnalyticsCharts />
-      ) : (
+      )}
+
+      {activeTab === 'simulation' && (
+        <WhatIfSimulator />
+      )}
+
+      {activeTab === 'cv' && (
+        <ComputerVisionInspector digitalQueueCount={queueData?.totalWaiting || 8} />
+      )}
+
+      {activeTab === 'queue' && (
         <>
           {/* Service Selector Bar */}
           <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
@@ -381,7 +436,7 @@ export default function AdminDashboard() {
                     <tr>
                       <th className="px-4 py-3">Token #</th>
                       <th className="px-4 py-3">Customer Name</th>
-                      <th className="px-4 py-3">Phone</th>
+                      <th className="px-4 py-3">Assigned Counter</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">AI Pred. Wait</th>
                       <th className="px-4 py-3">Created At</th>
@@ -397,8 +452,8 @@ export default function AdminDashboard() {
                         <td className="px-4 py-3 font-medium text-slate-200">
                           {token.customerName}
                         </td>
-                        <td className="px-4 py-3 text-slate-400">
-                          {token.customerPhone || 'N/A'}
+                        <td className="px-4 py-3 text-emerald-400 font-semibold font-mono">
+                          {token.counterName || '-'}
                         </td>
                         <td className="px-4 py-3">
                           <QueueStatusBadge status={token.status} />

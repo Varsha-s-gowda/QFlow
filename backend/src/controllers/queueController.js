@@ -1,10 +1,10 @@
 const Token = require('../models/Token');
 const Service = require('../models/Service');
+const Counter = require('../models/Counter');
 const Notification = require('../models/Notification');
 const { getPredictedWaitTime } = require('../services/aiServiceBridge');
 const { notifyQueueUpdate, notifyTokenUpdate } = require('../socket');
 
-// Helper to create & push notification
 const sendNotification = async (userId, tokenId, title, message, type) => {
   try {
     const notif = await Notification.create({
@@ -20,8 +20,6 @@ const sendNotification = async (userId, tokenId, title, message, type) => {
   }
 };
 
-// @desc    Join queue & auto-generate digital token with AI prediction
-// @route   POST /api/queue/join (User)
 exports.joinQueue = async (req, res) => {
   try {
     const { serviceId, customerPhone } = req.body;
@@ -88,7 +86,6 @@ exports.joinQueue = async (req, res) => {
       predictionConfidence: aiPrediction.confidenceScore
     });
 
-    // Create Notification
     await sendNotification(
       userId,
       token._id,
@@ -117,8 +114,6 @@ exports.joinQueue = async (req, res) => {
   }
 };
 
-// @desc    Get user's current active token with live position & AI prediction
-// @route   GET /api/queue/my-token (User)
 exports.getMyActiveToken = async (req, res) => {
   try {
     const token = await Token.findOne({
@@ -129,6 +124,7 @@ exports.getMyActiveToken = async (req, res) => {
         path: 'serviceId',
         populate: { path: 'organizationId', select: 'name code' }
       })
+      .populate('counterId', 'name counterNumber')
       .sort({ createdAt: -1 });
 
     if (!token) {
@@ -174,8 +170,6 @@ exports.getMyActiveToken = async (req, res) => {
   }
 };
 
-// @desc    Get complete service queue & metrics
-// @route   GET /api/queue/service/:serviceId
 exports.getServiceQueue = async (req, res) => {
   try {
     const { serviceId } = req.params;
@@ -206,29 +200,51 @@ exports.getServiceQueue = async (req, res) => {
   }
 };
 
-// @desc    Call next token in queue for a service (Admin)
+// @desc    Call next token in queue (supports smart counter allocation)
 // @route   POST /api/queue/call-next
 exports.callNextToken = async (req, res) => {
   try {
-    const { serviceId } = req.body;
+    const { serviceId, counterId } = req.body;
 
-    const service = await Service.findById(serviceId);
-    if (!service) {
-      return res.status(404).json({ message: 'Service not found' });
+    let targetServiceId = serviceId;
+    let counterObj = null;
+
+    if (counterId) {
+      counterObj = await Counter.findById(counterId);
+      if (counterObj && counterObj.assignedServices && counterObj.assignedServices.length > 0) {
+        // Smart allocation: if no specific serviceId provided, search across counter's assigned services
+        if (!targetServiceId) {
+          targetServiceId = counterObj.assignedServices[0];
+        }
+      }
     }
 
-    const nextToken = await Token.findOne({
-      serviceId,
-      status: 'waiting'
-    }).sort({ sequenceNumber: 1 });
+    let query = { status: 'waiting' };
+    if (targetServiceId) {
+      query.serviceId = targetServiceId;
+    } else if (counterObj && counterObj.assignedServices.length > 0) {
+      query.serviceId = { $in: counterObj.assignedServices };
+    }
+
+    const nextToken = await Token.findOne(query).sort({ sequenceNumber: 1 });
 
     if (!nextToken) {
-      return res.status(404).json({ message: 'No waiting tokens in queue' });
+      return res.status(404).json({ message: 'No waiting tokens in queue for selected counter/service' });
     }
 
     const now = new Date();
     nextToken.status = 'called';
     nextToken.calledAt = now;
+
+    if (counterObj) {
+      nextToken.counterId = counterObj._id;
+      nextToken.counterName = counterObj.name;
+
+      counterObj.status = 'busy';
+      counterObj.currentServingToken = nextToken._id;
+      counterObj.tokensServedCount += 1;
+      await counterObj.save();
+    }
 
     if (nextToken.createdAt) {
       const waitMs = now.getTime() - new Date(nextToken.createdAt).getTime();
@@ -237,17 +253,17 @@ exports.callNextToken = async (req, res) => {
 
     await nextToken.save();
 
-    // Send Notification to Called User
+    const counterNameStr = counterObj ? ` to ${counterObj.name}` : '';
+
     await sendNotification(
       nextToken.userId,
       nextToken._id,
       'YOUR TURN HAS BEEN CALLED!',
-      `Token #${nextToken.tokenNumber} is now being served. Please proceed to the counter immediately.`,
+      `Token #${nextToken.tokenNumber} is now being served${counterNameStr}. Please proceed to counter immediately.`,
       'called'
     );
 
-    // Check remaining waiting tokens and notify those with 2 or fewer people ahead
-    const remainingWaiting = await Token.find({ serviceId, status: 'waiting' }).sort({ sequenceNumber: 1 });
+    const remainingWaiting = await Token.find({ serviceId: nextToken.serviceId, status: 'waiting' }).sort({ sequenceNumber: 1 });
     for (let index = 0; index < remainingWaiting.length; index++) {
       const t = remainingWaiting[index];
       if (index < 2) {
@@ -261,17 +277,15 @@ exports.callNextToken = async (req, res) => {
       }
     }
 
-    notifyQueueUpdate(serviceId, { action: 'token_called', token: nextToken });
+    notifyQueueUpdate(nextToken.serviceId, { action: 'token_called', token: nextToken, counter: counterObj });
     notifyTokenUpdate(nextToken.userId, { action: 'called', token: nextToken });
 
-    res.json({ message: 'Token called successfully', token: nextToken });
+    res.json({ message: 'Token called successfully', token: nextToken, counter: counterObj });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Update token status (completed, skipped, cancelled)
-// @route   PATCH /api/queue/token/:tokenId/status
 exports.updateTokenStatus = async (req, res) => {
   try {
     const { tokenId } = req.params;
@@ -300,6 +314,9 @@ exports.updateTokenStatus = async (req, res) => {
         const serviceMs = now.getTime() - new Date(token.calledAt).getTime();
         token.actualServiceDurationMins = Math.round((serviceMs / 60000) * 10) / 10;
       }
+      if (token.counterId) {
+        await Counter.findByIdAndUpdate(token.counterId, { status: 'open', currentServingToken: null });
+      }
       await sendNotification(
         token.userId,
         token._id,
@@ -310,6 +327,9 @@ exports.updateTokenStatus = async (req, res) => {
     }
 
     if (status === 'skipped') {
+      if (token.counterId) {
+        await Counter.findByIdAndUpdate(token.counterId, { status: 'open', currentServingToken: null });
+      }
       await sendNotification(
         token.userId,
         token._id,

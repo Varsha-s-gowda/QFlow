@@ -11,6 +11,15 @@ const tokenSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  counterId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Counter',
+    default: null
+  },
+  counterName: {
+    type: String,
+    default: ''
+  },
   tokenNumber: {
     type: String,
     required: true

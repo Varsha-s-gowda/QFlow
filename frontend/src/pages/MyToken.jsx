@@ -13,7 +13,8 @@ import {
   Building2,
   CheckCircle2,
   ArrowLeft,
-  Radio
+  Radio,
+  Monitor
 } from 'lucide-react';
 
 export default function MyToken() {
@@ -39,7 +40,6 @@ export default function MyToken() {
     fetchTokenData();
   }, []);
 
-  // Real-time WebSocket connection
   useEffect(() => {
     if (!data?.token) return;
 
@@ -47,12 +47,10 @@ export default function MyToken() {
     const userId = data.token.userId;
 
     const unsubscribeQueue = subscribeToServiceQueue(serviceId, () => {
-      console.log('[Socket.IO] Service queue updated event received - updating live view');
       fetchTokenData();
     });
 
     const unsubscribeUser = subscribeToUserToken(userId, () => {
-      console.log('[Socket.IO] Token status updated event received - updating live view');
       fetchTokenData();
     });
 
@@ -162,6 +160,14 @@ export default function MyToken() {
               <div className="font-heading text-5xl sm:text-6xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-300 via-white to-emerald-300 bg-clip-text text-transparent">
                 {data.token.tokenNumber}
               </div>
+
+              {data.token.counterName && (
+                <div className="inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold uppercase tracking-wider animate-pulse">
+                  <Monitor className="w-4 h-4 text-emerald-400" />
+                  <span>PROCEED TO {data.token.counterName.toUpperCase()}</span>
+                </div>
+              )}
+
               <p className="text-xs text-slate-400">
                 Booked for: <span className="text-slate-200 font-medium">{data.token.customerName}</span>
               </p>
@@ -172,7 +178,7 @@ export default function MyToken() {
               <div className="bg-emerald-500/20 border-2 border-emerald-500/40 p-4 rounded-2xl flex items-center space-x-3 text-emerald-300 animate-pulse">
                 <CheckCircle2 className="w-6 h-6 shrink-0" />
                 <div className="text-xs sm:text-sm font-semibold">
-                  IT IS YOUR TURN! Please proceed to the service counter immediately.
+                  IT IS YOUR TURN! Please proceed to {data.token.counterName || 'the service counter'} immediately.
                 </div>
               </div>
             )}
