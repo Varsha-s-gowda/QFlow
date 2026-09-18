@@ -13,11 +13,11 @@ const tokenSchema = new mongoose.Schema({
   },
   tokenNumber: {
     type: String,
-    required: true // e.g., "REG-101"
+    required: true
   },
   sequenceNumber: {
     type: Number,
-    required: true // e.g., 101
+    required: true
   },
   customerName: {
     type: String,
@@ -38,6 +38,22 @@ const tokenSchema = new mongoose.Schema({
   },
   completedAt: {
     type: Date,
+    default: null
+  },
+  actualWaitDurationMins: {
+    type: Number,
+    default: null
+  },
+  actualServiceDurationMins: {
+    type: Number,
+    default: null
+  },
+  predictedWaitTimeMins: {
+    type: Number,
+    default: null
+  },
+  predictionConfidence: {
+    type: Number,
     default: null
   },
   createdAt: {

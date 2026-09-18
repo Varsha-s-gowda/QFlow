@@ -24,8 +24,15 @@ const serviceSchema = new mongoose.Schema({
   },
   estimatedTimePerUser: {
     type: Number,
-    default: 5, // minutes per customer
-    min: 1
+    default: 5 // minutes per customer
+  },
+  historicalAvgDuration: {
+    type: Number,
+    default: 5.0
+  },
+  currentServiceSpeed: {
+    type: Number,
+    default: 1.0 // 1.0 normal speed, >1.0 fast, <1.0 slow
   },
   status: {
     type: String,
@@ -34,7 +41,7 @@ const serviceSchema = new mongoose.Schema({
   },
   currentCounter: {
     type: Number,
-    default: 100 // Starting sequence number, e.g., 100 -> token prefix-101
+    default: 100
   },
   createdAt: {
     type: Date,

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../services/api';
+import { subscribeToServiceQueue, subscribeToUserToken } from '../services/socket';
 import QueueStatusBadge from '../components/QueueStatusBadge';
+import AIPredictionBadge from '../components/AIPredictionBadge';
 import {
   Ticket,
   Clock,
@@ -10,8 +12,8 @@ import {
   XCircle,
   Building2,
   CheckCircle2,
-  AlertTriangle,
-  ArrowLeft
+  ArrowLeft,
+  Radio
 } from 'lucide-react';
 
 export default function MyToken() {
@@ -19,8 +21,6 @@ export default function MyToken() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [error, setError] = useState('');
-  const navigate = useNavigate();
 
   const fetchTokenData = async () => {
     try {
@@ -28,7 +28,7 @@ export default function MyToken() {
       const res = await api.get('/queue/my-token');
       setData(res);
     } catch (err) {
-      setError(err.message || 'Failed to load token information');
+      console.error('Failed to load token info:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -37,10 +37,30 @@ export default function MyToken() {
 
   useEffect(() => {
     fetchTokenData();
-    // Auto refresh every 10 seconds for real-time tracking
-    const interval = setInterval(fetchTokenData, 10000);
-    return () => clearInterval(interval);
   }, []);
+
+  // Real-time WebSocket connection
+  useEffect(() => {
+    if (!data?.token) return;
+
+    const serviceId = data.token.serviceId?._id || data.token.serviceId;
+    const userId = data.token.userId;
+
+    const unsubscribeQueue = subscribeToServiceQueue(serviceId, () => {
+      console.log('[Socket.IO] Service queue updated event received - updating live view');
+      fetchTokenData();
+    });
+
+    const unsubscribeUser = subscribeToUserToken(userId, () => {
+      console.log('[Socket.IO] Token status updated event received - updating live view');
+      fetchTokenData();
+    });
+
+    return () => {
+      unsubscribeQueue();
+      unsubscribeUser();
+    };
+  }, [data?.token?._id]);
 
   const handleCancelToken = async () => {
     if (!data?.token?._id) return;
@@ -76,14 +96,21 @@ export default function MyToken() {
           <span>Back to All Services</span>
         </Link>
 
-        <button
-          onClick={fetchTokenData}
-          disabled={refreshing}
-          className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold transition-all"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-indigo-400' : ''}`} />
-          <span>Refresh Queue</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20">
+            <Radio className="w-3.5 h-3.5 animate-pulse" />
+            <span>Real-time Live Sync</span>
+          </div>
+
+          <button
+            onClick={fetchTokenData}
+            disabled={refreshing}
+            className="flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold transition-all"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-indigo-400' : ''}`} />
+            <span>Sync</span>
+          </button>
+        </div>
       </div>
 
       {!data?.active || !data?.token ? (
@@ -150,6 +177,11 @@ export default function MyToken() {
               </div>
             )}
 
+            {/* AI ML Prediction Widget */}
+            {data.token.status === 'waiting' && (
+              <AIPredictionBadge prediction={data.aiPrediction} />
+            )}
+
             {/* Real-time Live Stats Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1 text-center">
@@ -171,7 +203,7 @@ export default function MyToken() {
                 <div className="text-3xl font-extrabold font-heading text-white">
                   ~{data.estimatedWaitTimeMins} <span className="text-sm font-normal text-slate-400">mins</span>
                 </div>
-                <span className="text-[11px] text-slate-400">calculated dynamically</span>
+                <span className="text-[11px] text-slate-400">AI dynamic prediction</span>
               </div>
 
               <div className="glass-card p-5 rounded-2xl border border-slate-800 space-y-1 text-center">

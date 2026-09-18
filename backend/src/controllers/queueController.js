@@ -1,14 +1,15 @@
 const Token = require('../models/Token');
 const Service = require('../models/Service');
+const { getPredictedWaitTime } = require('../services/aiServiceBridge');
+const { notifyQueueUpdate, notifyTokenUpdate } = require('../socket');
 
-// @desc    Join queue & auto-generate digital token
+// @desc    Join queue & auto-generate digital token with AI prediction
 // @route   POST /api/queue/join (User)
 exports.joinQueue = async (req, res) => {
   try {
     const { serviceId, customerPhone } = req.body;
     const userId = req.user._id;
 
-    // Check if service exists and is open
     const service = await Service.findById(serviceId);
     if (!service) {
       return res.status(404).json({ message: 'Service not found' });
@@ -17,7 +18,6 @@ exports.joinQueue = async (req, res) => {
       return res.status(400).json({ message: 'Queue for this service is currently closed' });
     }
 
-    // Check if user already has an active token for this service
     const existingActiveToken = await Token.findOne({
       userId,
       serviceId,
@@ -31,7 +31,6 @@ exports.joinQueue = async (req, res) => {
       });
     }
 
-    // Increment service counter atomically
     const updatedService = await Service.findByIdAndUpdate(
       serviceId,
       { $inc: { currentCounter: 1 } },
@@ -41,6 +40,27 @@ exports.joinQueue = async (req, res) => {
     const sequenceNumber = updatedService.currentCounter;
     const tokenNumber = `${service.prefix}-${sequenceNumber}`;
 
+    // Calculate queue stats
+    const peopleAhead = await Token.countDocuments({
+      serviceId,
+      status: 'waiting',
+      sequenceNumber: { $lt: sequenceNumber }
+    });
+
+    const totalQueueLength = await Token.countDocuments({
+      serviceId,
+      status: { $in: ['waiting', 'called'] }
+    });
+
+    // AI Prediction call
+    const aiPrediction = await getPredictedWaitTime({
+      peopleAhead,
+      queueLength: totalQueueLength,
+      servicePrefix: service.prefix,
+      historicalAvgDuration: service.historicalAvgDuration || service.estimatedTimePerUser,
+      currentServiceSpeed: service.currentServiceSpeed || 1.0
+    });
+
     const token = await Token.create({
       serviceId,
       userId,
@@ -48,29 +68,34 @@ exports.joinQueue = async (req, res) => {
       sequenceNumber,
       customerName: req.user.name,
       customerPhone: customerPhone || req.user.phone || '',
-      status: 'waiting'
-    });
-
-    // Calculate queue stats
-    const tokensAhead = await Token.countDocuments({
-      serviceId,
       status: 'waiting',
-      sequenceNumber: { $lt: sequenceNumber }
+      predictedWaitTimeMins: aiPrediction.predictedWaitTimeMins,
+      predictionConfidence: aiPrediction.confidenceScore
     });
 
-    res.status(201).json({
+    const payload = {
       token,
       queueStats: {
-        peopleAhead: tokensAhead,
-        estimatedWaitTimeMins: tokensAhead * service.estimatedTimePerUser
+        peopleAhead,
+        predictedWaitTimeMins: aiPrediction.predictedWaitTimeMins,
+        confidenceScore: aiPrediction.confidenceScore,
+        expectedCompletionTime: aiPrediction.expectedCompletionTime,
+        modelType: aiPrediction.modelType,
+        isAIPowered: aiPrediction.isAIPowered
       }
-    });
+    };
+
+    // Emit Socket.IO real-time notification to service room & user room
+    notifyQueueUpdate(serviceId, { action: 'join', token });
+    notifyTokenUpdate(userId, { action: 'created', token });
+
+    res.status(201).json(payload);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get user's current active token with live position
+// @desc    Get user's current active token with live position & AI prediction
 // @route   GET /api/queue/my-token (User)
 exports.getMyActiveToken = async (req, res) => {
   try {
@@ -90,24 +115,37 @@ exports.getMyActiveToken = async (req, res) => {
 
     const service = token.serviceId;
 
-    // Tokens waiting ahead of this token
-    const peopleAhead = await Token.countDocuments({
+    const peopleAhead = token.status === 'called' ? 0 : await Token.countDocuments({
       serviceId: service._id,
       status: 'waiting',
       sequenceNumber: { $lt: token.sequenceNumber }
     });
 
-    // Token currently called
+    const totalQueueLength = await Token.countDocuments({
+      serviceId: service._id,
+      status: { $in: ['waiting', 'called'] }
+    });
+
     const currentCalledToken = await Token.findOne({
       serviceId: service._id,
       status: 'called'
     }).sort({ calledAt: -1 });
 
+    // AI Prediction call
+    const aiPrediction = await getPredictedWaitTime({
+      peopleAhead,
+      queueLength: totalQueueLength,
+      servicePrefix: service.prefix,
+      historicalAvgDuration: service.historicalAvgDuration || service.estimatedTimePerUser,
+      currentServiceSpeed: service.currentServiceSpeed || 1.0
+    });
+
     res.json({
       active: true,
       token,
-      peopleAhead: token.status === 'called' ? 0 : peopleAhead,
-      estimatedWaitTimeMins: token.status === 'called' ? 0 : peopleAhead * (service.estimatedTimePerUser || 5),
+      peopleAhead,
+      estimatedWaitTimeMins: aiPrediction.predictedWaitTimeMins,
+      aiPrediction,
       currentServingToken: currentCalledToken ? currentCalledToken.tokenNumber : 'None'
     });
   } catch (error) {
@@ -130,7 +168,7 @@ exports.getServiceQueue = async (req, res) => {
 
     const waitingTokens = tokens.filter(t => t.status === 'waiting');
     const calledToken = tokens.find(t => t.status === 'called');
-    const completedCount = tokens.filter(t => t.status === 'completed').length;
+    const completedTokens = tokens.filter(t => t.status === 'completed');
     const skippedCount = tokens.filter(t => t.status === 'skipped').length;
 
     res.json({
@@ -138,7 +176,7 @@ exports.getServiceQueue = async (req, res) => {
       totalWaiting: waitingTokens.length,
       currentServingToken: calledToken ? calledToken.tokenNumber : null,
       currentCalledToken: calledToken || null,
-      completedCount,
+      completedCount: completedTokens.length,
       skippedCount,
       tokens
     });
@@ -147,8 +185,8 @@ exports.getServiceQueue = async (req, res) => {
   }
 };
 
-// @desc    Call next token in queue for a service
-// @route   POST /api/queue/call-next (Admin)
+// @desc    Call next token in queue for a service (Admin)
+// @route   POST /api/queue/call-next
 exports.callNextToken = async (req, res) => {
   try {
     const { serviceId } = req.body;
@@ -158,7 +196,6 @@ exports.callNextToken = async (req, res) => {
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    // Find token currently called and mark it as completed or auto-transition if needed, or check next waiting token
     const nextToken = await Token.findOne({
       serviceId,
       status: 'waiting'
@@ -168,9 +205,21 @@ exports.callNextToken = async (req, res) => {
       return res.status(404).json({ message: 'No waiting tokens in queue' });
     }
 
+    const now = new Date();
     nextToken.status = 'called';
-    nextToken.calledAt = Date.now();
+    nextToken.calledAt = now;
+    
+    // Calculate actual wait duration in minutes
+    if (nextToken.createdAt) {
+      const waitMs = now.getTime() - new Date(nextToken.createdAt).getTime();
+      nextToken.actualWaitDurationMins = Math.round((waitMs / 60000) * 10) / 10;
+    }
+
     await nextToken.save();
+
+    // Broadcast Socket.IO events
+    notifyQueueUpdate(serviceId, { action: 'token_called', token: nextToken });
+    notifyTokenUpdate(nextToken.userId, { action: 'called', token: nextToken });
 
     res.json({ message: 'Token called successfully', token: nextToken });
   } catch (error) {
@@ -195,20 +244,30 @@ exports.updateTokenStatus = async (req, res) => {
       return res.status(404).json({ message: 'Token not found' });
     }
 
-    // If user cancelling, verify ownership
     if (status === 'cancelled' && req.user.role !== 'admin' && token.userId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to cancel this token' });
     }
 
+    const now = new Date();
     token.status = status;
+
     if (status === 'completed') {
-      token.completedAt = Date.now();
+      token.completedAt = now;
+      if (token.calledAt) {
+        const serviceMs = now.getTime() - new Date(token.calledAt).getTime();
+        token.actualServiceDurationMins = Math.round((serviceMs / 60000) * 10) / 10;
+      }
     }
     if (status === 'called') {
-      token.calledAt = Date.now();
+      token.calledAt = now;
     }
 
     await token.save();
+
+    // Emit real-time Socket.IO notifications
+    notifyQueueUpdate(token.serviceId, { action: 'status_updated', token });
+    notifyTokenUpdate(token.userId, { action: 'status_updated', token });
+
     res.json(token);
   } catch (error) {
     res.status(500).json({ message: error.message });

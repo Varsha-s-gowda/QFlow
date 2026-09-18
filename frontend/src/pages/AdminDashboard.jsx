@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { subscribeToServiceQueue } from '../services/socket';
 import QueueStatusBadge from '../components/QueueStatusBadge';
 import Modal from '../components/Modal';
 import {
@@ -9,14 +10,10 @@ import {
   CheckCircle2,
   SkipForward,
   Building2,
-  Layers,
-  Users,
-  Clock,
   RefreshCw,
-  AlertCircle,
   ToggleLeft,
   ToggleRight,
-  Ticket
+  Radio
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -25,7 +22,6 @@ export default function AdminDashboard() {
   const [queueData, setQueueData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
   // Modals state
@@ -58,7 +54,7 @@ export default function AdminDashboard() {
         setNewService(prev => ({ ...prev, organizationId: data[0]._id }));
       }
     } catch (err) {
-      setError(err.message);
+      console.error(err);
     }
   };
 
@@ -69,7 +65,7 @@ export default function AdminDashboard() {
       const data = await api.get(`/queue/service/${serviceId}`);
       setQueueData(data);
     } catch (err) {
-      setError(err.message);
+      console.error(err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,6 +80,18 @@ export default function AdminDashboard() {
     if (selectedServiceId) {
       fetchQueueData(selectedServiceId);
     }
+  }, [selectedServiceId]);
+
+  // Real-time Socket.IO sync for selected service
+  useEffect(() => {
+    if (!selectedServiceId) return;
+
+    const unsubscribe = subscribeToServiceQueue(selectedServiceId, (eventData) => {
+      console.log('[Socket.IO Admin] Live queue event received:', eventData);
+      fetchQueueData(selectedServiceId);
+    });
+
+    return () => unsubscribe();
   }, [selectedServiceId]);
 
   const handleCallNext = async () => {
@@ -148,11 +156,9 @@ export default function AdminDashboard() {
     }
   };
 
-  // Find selected service metadata
   const allServices = orgs.flatMap(o => o.services || []);
   const currentService = allServices.find(s => s._id === selectedServiceId);
 
-  // Filter tokens
   const filteredTokens = queueData?.tokens ? queueData.tokens.filter(t => {
     if (statusFilter === 'all') return true;
     return t.status === statusFilter;
@@ -167,7 +173,13 @@ export default function AdminDashboard() {
             <Shield className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold font-heading text-white">Queue Control Dashboard</h1>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-2xl font-bold font-heading text-white">Queue Control Dashboard</h1>
+              <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+                <span>Live Socket.IO Sync</span>
+              </span>
+            </div>
             <p className="text-xs text-slate-400">Manage organizations, services, and live queue operations</p>
           </div>
         </div>
@@ -190,7 +202,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Service Selector Selector Bar */}
+      {/* Service Selector Bar */}
       <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -245,7 +257,7 @@ export default function AdminDashboard() {
             className="self-end sm:self-center px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 text-xs font-semibold flex items-center space-x-2"
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-indigo-400' : ''}`} />
-            <span>Refresh Queue</span>
+            <span>Sync</span>
           </button>
         </div>
       </div>
@@ -337,6 +349,7 @@ export default function AdminDashboard() {
                   <th className="px-4 py-3">Customer Name</th>
                   <th className="px-4 py-3">Phone</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">AI Pred. Wait</th>
                   <th className="px-4 py-3">Created At</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
@@ -355,6 +368,9 @@ export default function AdminDashboard() {
                     </td>
                     <td className="px-4 py-3">
                       <QueueStatusBadge status={token.status} />
+                    </td>
+                    <td className="px-4 py-3 text-slate-300 font-mono">
+                      {token.predictedWaitTimeMins !== null ? `~${token.predictedWaitTimeMins}m` : '-'}
                     </td>
                     <td className="px-4 py-3 text-slate-400">
                       {new Date(token.createdAt).toLocaleTimeString()}
